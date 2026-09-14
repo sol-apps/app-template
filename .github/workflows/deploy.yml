@@ -33,5 +33,9 @@ concurrency:
 
 jobs:
   deploy:
+    # This caller is stored in the template repository itself. Publishing a new
+    # template revision must not try to deploy `app-template` as an application;
+    # repositories generated from it have a different name and take the normal path.
+    if: ${{ github.repository != 'sol-apps/app-template' }}
     uses: sol-apps/workflows/.github/workflows/deploy.yml@main
     secrets: inherit
