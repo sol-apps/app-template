@@ -58,17 +58,22 @@ const $who = document.getElementById('who');
 const $in = document.getElementById('sign-in');
 const $out = document.getElementById('sign-out');
 
-PBAuth.onChange((user) => {
-  $in.hidden = !!user;
-  $out.hidden = !user;
-  $who.hidden = !user;
-  if (user) {
-    $who.textContent = user.name || user.email;
-    // PBAuth.isAdmin() is server-set from the grant, so it is safe to branch on for
-    // what to SHOW. What an admin may DO is still enforced by collection rules.
-    if (PBAuth.isAdmin()) $who.textContent += ' — admin';
-  }
-});
+PBAuth.mode().then((access) => {
+  // Public has no login prompt and makes no OIDC request. Generated public apps
+  // normally remove these controls; the starter is safe before they do.
+  if (access !== 'keycloak') return;
+  PBAuth.onChange((user) => {
+    $in.hidden = !!user;
+    $out.hidden = !user;
+    $who.hidden = !user;
+    if (user) {
+      $who.textContent = user.name || user.email;
+      // PBAuth.isAdmin() is server-set from the grant, so it is safe to branch on for
+      // what to SHOW. What an admin may DO is still enforced by collection rules.
+      if (PBAuth.isAdmin()) $who.textContent += ' — admin';
+    }
+  });
+}).catch((err) => console.error('[app] access policy unavailable', err));
 
 $in.addEventListener('click', () => PBAuth.signIn().catch((err) => {
   console.error('[app] sign-in failed', err);

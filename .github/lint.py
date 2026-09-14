@@ -29,7 +29,7 @@ TIERS = {"green", "amber", "red"}
 RUNTIME_SHAPES = {"static", "datastore", "identity", "scheduler", "endpoint"}
 DATA_REACH = {"invented", "own", "reads_sor", "writes_sor", "sends_outward"}
 REQUIRED_SPEC_KEYS = [
-    "title", "slug", "description", "runtime_shape",
+    "title", "slug", "description", "access", "runtime_shape",
     "data_reach", "blast_radius", "scopes", "tier", "rationale",
 ]
 
@@ -123,7 +123,83 @@ def changed_files(base, head):
 
 # --------------------------------------------------------------------- spec
 
-def load_spec():
+def spec_at(revision):
+    if not revision:
+        return None
+    try:
+        raw = subprocess.run(
+            ["git", "show", f"{revision}:spec.json"], capture_output=True,
+            text=True, check=True,
+        ).stdout
+        value = json.loads(raw)
+        return value if isinstance(value, dict) else None
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return None
+
+
+def check_access(spec, previous):
+    access = spec.get("access")
+    # Compatibility is deliberately one-way: an app whose reviewed base spec predates
+    # access.mode retains its current runtime. Omission never selects public access,
+    # and a new app cannot omit the choice.
+    if access is None and previous is not None and previous.get("access") is None:
+        note("legacy spec has no access.mode — runtime remains explicitly unclassified")
+        return
+    if not isinstance(access, dict):
+        fail("spec.json access must be an object with mode and anonymous fields")
+        return
+    mode = access.get("mode")
+    if mode not in {"keycloak", "public"}:
+        fail("spec.json access.mode must be 'keycloak' or 'public' (missing never means public)")
+        return
+    anonymous = access.get("anonymous")
+    if not isinstance(anonymous, list) or any(
+            not isinstance(item, str) or not item.strip() for item in (anonymous or [])):
+        fail("spec.json access.anonymous must be an array of non-empty surface declarations")
+    elif mode == "keycloak" and anonymous:
+        fail("keycloak apps must use access.anonymous: [] — authenticated surfaces are not anonymous")
+    elif mode == "public" and not anonymous:
+        fail("public apps must enumerate each intended anonymous surface in access.anonymous")
+    elif any(item.strip().lower() in {"all", "everything", "*"} for item in anonymous):
+        fail("access.anonymous must name individual surfaces; 'all' and '*' are not declarations")
+    elif mode == "public":
+        invalid = []
+        for item in anonymous:
+            surface = item.strip()
+            page = re.fullmatch(r"GET /[A-Za-z0-9._/-]*", surface)
+            collection = re.fullmatch(
+                r"(list|view|create|update|delete):[a-z][a-z0-9_]*", surface)
+            if (page and (surface == "GET /api" or surface.startswith("GET /api/"))) or not (page or collection):
+                invalid.append(item)
+        if invalid:
+            fail("public access.anonymous supports static GET paths and explicit "
+                 "collection operations such as list:directory; invalid: " +
+                 ", ".join(repr(item) for item in invalid))
+        if len(set(item.strip() for item in anonymous)) != len(anonymous):
+            fail("access.anonymous contains duplicate surface declarations")
+
+    if previous is None:
+        return
+    old_access = previous.get("access")
+    # An absent historical declaration is not evidence of either runtime. Adding
+    # the first explicit Keycloak policy to a legacy app is an inventory operation,
+    # and production still verifies that OIDC is already present before recording it.
+    # Generic mode changes are deliberately unsupported: doing them safely needs an
+    # app-specific staged migration and a tested rollback, not three prose fields.
+    old_mode = (old_access or {}).get("mode") if isinstance(old_access, dict) else "legacy"
+    if old_mode == "legacy" and mode == "public":
+        fail("a legacy app cannot be made public by the generic pipeline; use an app-specific staged migration")
+    elif old_mode != "legacy" and old_mode != mode:
+        fail("access.mode changes require an app-specific staged migration; the generic pipeline refuses them")
+    elif old_mode == "legacy" and mode == "keycloak":
+        transition = access.get("transition")
+        if not isinstance(transition, dict) or any(
+                not isinstance(transition.get(key), str) or not transition.get(key).strip()
+                for key in ("data", "tokens", "rollback")):
+            fail("classifying a legacy Keycloak app requires non-empty access.transition.data, tokens and rollback")
+
+
+def load_spec(base=""):
     path = os.path.join(REPO, "spec.json")
     if not os.path.exists(path):
         fail("spec.json is missing — every generated app declares what it does before it ships")
@@ -140,7 +216,9 @@ def load_spec():
 
     for key in REQUIRED_SPEC_KEYS:
         if key not in spec:
-            fail(f"spec.json is missing the required key '{key}'")
+            # Only reviewed legacy specs receive the missing-access compatibility.
+            if key != "access" or spec_at(base) is None:
+                fail(f"spec.json is missing the required key '{key}'")
 
     if spec.get("tier") not in TIERS:
         fail(f"spec.json tier must be one of {sorted(TIERS)}, got {spec.get('tier')!r}")
@@ -152,6 +230,7 @@ def load_spec():
         fail("spec.json scopes must be an array")
     if not str(spec.get("rationale", "")).strip():
         fail("spec.json rationale must explain why the app landed on its tier")
+    check_access(spec, spec_at(base))
     return spec
 
 
@@ -285,6 +364,16 @@ def check_identity_present(files):
             )
 
 
+def check_legacy_identity_convergence(spec, base, head):
+    """An access-aware hook cannot land on an unclassified legacy runtime."""
+    if not base or not head or spec.get("access") is not None:
+        return
+    changed = changed_files(base, head)
+    if changed is not None and any(path in PROTECTED_FILES for path in changed):
+        fail("a legacy app cannot converge protected identity files while omitting access.mode — "
+             "classify it in the same reviewed migration so production cannot guess public")
+
+
 # ----------------------------------------------------------------- hook rules
 
 # Comments and string literals are not stripped before these run. A false positive on
@@ -323,6 +412,11 @@ def check_hooks(spec, files):
             continue
         with open(full, encoding="utf-8", errors="replace") as fh:
             lines = fh.readlines()
+        if (((spec.get("access") or {}).get("mode") == "public") and
+                path not in PROTECTED_FILES and
+                any(re.search(r"\brouterAdd\s*\(", line) for line in lines)):
+            fail(f"{path}: public v1 does not allow custom hook routes — use explicit "
+                 "PocketBase collection operations so live policy can be audited")
         for lineno, line in enumerate(lines, 1):
             for pattern, message, applies in HOOK_RULES:
                 if pattern.search(line) and applies(spec or {}):
@@ -342,11 +436,13 @@ def main():
     head = sys.argv[2] if len(sys.argv) > 2 else ""
 
     files = tracked_files()
-    spec = load_spec()
+    spec = load_spec(base)
     check_repo_shape(files)
     check_placeholders(files)
     check_protected(base, head)
     check_identity_present(files)
+    if spec:
+        check_legacy_identity_convergence(spec, base, head)
     check_hooks(spec, files)
     note_users_reach(files)
 
@@ -364,7 +460,8 @@ def main():
         return 1
 
     tier = (spec or {}).get("tier", "?")
-    print(f"greenlight-lint: clean — {len(files)} files, declared tier '{tier}'")
+    access = ((spec or {}).get("access") or {}).get("mode", "unclassified legacy")
+    print(f"greenlight-lint: clean — {len(files)} files, declared tier '{tier}', access '{access}'")
     return 0
 
 

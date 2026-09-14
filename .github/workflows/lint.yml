@@ -1,28 +1,51 @@
 name: Greenlight
 
-# The governance check. Branch protection on `main` requires the context
-# "greenlight-lint" to pass, so the job's `name:` below MUST stay exactly that —
-# protection is created with enforce_admins, which means a check that never reports
-# blocks the merge for everyone, including the repo owner.
-#
-# It exists to catch the one class of problem that needs no AI judgement: code that
-# contradicts the spec it shipped with.
+# This file is only a caller. pull_request_target makes GitHub load it from the
+# reviewed base branch, and both jobs call verifier code pinned to one full platform
+# commit. The audit job runs PR migrations but has no token permissions or secrets.
+# The report job starts on a fresh runner, sees no PR files, and holds only checks:write.
 
 on:
-  pull_request:
-  workflow_dispatch:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: greenlight-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  greenlight-lint:
-    name: greenlight-lint
+  audit:
+    name: greenlight-audit
+    permissions: {}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Audit the exact PR tree
+        uses: sol-apps/platform/greenlight/pr-verifier@120bb139e5e044988c49b9b4945255fdead8b989
         with:
-          fetch-depth: 0
+          operation: audit
+          repository: ${{ github.repository }}
+          head-repository: ${{ github.event.pull_request.head.repo.full_name }}
+          pull-request: ${{ github.event.pull_request.number }}
+          base-sha: ${{ github.event.pull_request.base.sha }}
+          head-sha: ${{ github.event.pull_request.head.sha }}
+          template-ref: 120bb139e5e044988c49b9b4945255fdead8b989
 
-      - name: Check the app against its own spec
-        run: python3 .github/lint.py "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
+  report:
+    name: greenlight-report
+    if: ${{ always() }}
+    needs: audit
+    permissions:
+      checks: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the required check on the PR head
+        uses: sol-apps/platform/greenlight/pr-verifier@120bb139e5e044988c49b9b4945255fdead8b989
+        with:
+          operation: report
+          repository: ${{ github.repository }}
+          head-sha: ${{ github.event.pull_request.head.sha }}
+          audit-result: ${{ needs.audit.result }}
+          run-url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          token: ${{ github.token }}

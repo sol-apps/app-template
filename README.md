@@ -17,7 +17,7 @@ Merging it is also what ships it. A merge to `main` puts this repo live on its o
 subdomain automatically, so the approval is the deploy; there is no separate release
 step afterwards, and no way to reach production that skips the review.
 
-- **Spec:** [`spec.json`](spec.json) — the capabilities, scopes and tier this app
+- **Spec:** [`spec.json`](spec.json) — the access policy, capabilities, scopes and tier this app
   declares, agreed with the builder before any code was written.
 - **Conventions:** [`AGENT.md`](AGENT.md) — node-free static frontend, PocketBase
   hooks, vendored design system.
@@ -26,14 +26,16 @@ step afterwards, and no way to reach production that skips the review.
 
 ## Running it locally
 
+From this app checkout, run the installed platform workbench:
+
 ```bash
-pocketbase serve --publicDir . --hooksDir ./pb_hooks --dir ./.pb_data
+pb-dev
 ```
 
 Then open http://127.0.0.1:8090.
 
-There is no identity provider locally, and the app notices: with no `OIDC_*` in the
-environment the identity hook leaves password auth enabled and skips provider
-configuration, so you can make a local account and work. On prod that branch is never
-taken — provisioning writes the app's OIDC configuration before the instance is ever
-started, password auth is switched off, and the only way in is a grant.
+`pb-dev` selects `GREENLIGHT_IDENTITY_MODE=local` explicitly and creates the local
+operator superuser. Missing OIDC credentials never select a production access mode.
+On production, the reviewed spec selects `GREENLIGHT_ACCESS_MODE=keycloak` (central
+sign-in and grants) or `public` (no OIDC client or sign-in); password auth remains off
+in both modes.

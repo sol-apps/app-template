@@ -1,6 +1,6 @@
 # Repo conventions
 
-You are building one governed mini-app in this repository. This file is the local,
+You are building one reviewed mini-app in this repository. This file is the local,
 checked-in half of your instructions; your system prompt is the other half. Where
 they overlap, they agree. Where this file is more specific, follow it.
 
@@ -130,6 +130,18 @@ Create it at the repo root from the spec you agreed with the builder, in the sha
 of `spec.json.example`. It is read by the tier classifier, by the human reviewer,
 and by CI — which cross-checks the code against what the spec claims. Code that
 contradicts its own spec fails the build.
+
+`access.mode` is independent of the Green/Amber/Red tier. It is either `keycloak`
+(central sign-in and per-app grants) or `public` (no sign-in). A public app lists each
+anonymous page or collection operation in `access.anonymous`; it does not mean
+all PocketBase collections are open. Public v1 supports static `GET /...` pages and
+explicit collection operations such as `list:directory`; custom anonymous hook routes
+are refused because the live audit cannot enumerate their handler checks. Do not
+change the mode of an existing app through
+the generic build: that needs an app-specific staged migration and tested rollback, and
+the shared deploy refuses it. A legacy app already running behind Keycloak may be
+classified with `access.transition.data`, `.tokens` and `.rollback`; production verifies
+the existing OIDC state before recording that inventory.
 
 ## Delivery
 

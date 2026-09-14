@@ -2,6 +2,10 @@
   "title": "Supplier Lookup",
   "slug": "supplier-lookup",
   "description": "Lets buyers search the approved supplier list and see each supplier's status, category and spend to date.",
+  "access": {
+    "mode": "keycloak",
+    "anonymous": []
+  },
   "runtime_shape": "datastore",
   "data_reach": "own",
   "blast_radius": "low",
