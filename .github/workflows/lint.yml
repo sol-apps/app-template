@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Audit the exact PR tree
-        uses: sol-apps/workflows/greenlight/pr-verifier@7ffc951d7c86de39b8eee5475fbc3852dec30e32
+        uses: sol-apps/workflows/greenlight/pr-verifier@864a4a1d4d9dd1c78f8f7e96e9923e8e40bf6898
         with:
           operation: audit
           repository: ${{ github.repository }}
@@ -30,7 +30,7 @@ jobs:
           pull-request: ${{ github.event.pull_request.number }}
           base-sha: ${{ github.event.pull_request.base.sha }}
           head-sha: ${{ github.event.pull_request.head.sha }}
-          template-ref: 7ffc951d7c86de39b8eee5475fbc3852dec30e32
+          template-ref: 864a4a1d4d9dd1c78f8f7e96e9923e8e40bf6898
 
   report:
     name: greenlight-report
@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Publish the required check on the PR head
-        uses: sol-apps/workflows/greenlight/pr-verifier@7ffc951d7c86de39b8eee5475fbc3852dec30e32
+        uses: sol-apps/workflows/greenlight/pr-verifier@864a4a1d4d9dd1c78f8f7e96e9923e8e40bf6898
         with:
           operation: report
           repository: ${{ github.repository }}
